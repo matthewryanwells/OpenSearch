@@ -46,6 +46,7 @@ import org.opensearch.search.internal.SearchContext;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Aggregation Factory for sum agg
@@ -54,29 +55,47 @@ import java.util.Map;
  */
 class SumAggregatorFactory extends ValuesSourceAggregatorFactory {
 
+    private static SumAggregationBuilder.methodType method = SumAggregationBuilder.methodType.KAHAN;
+
     SumAggregatorFactory(
         String name,
         ValuesSourceConfig config,
+        SumAggregationBuilder.methodType method,
         QueryShardContext queryShardContext,
         AggregatorFactory parent,
         AggregatorFactories.Builder subFactoriesBuilder,
         Map<String, Object> metadata
     ) throws IOException {
         super(name, config, queryShardContext, parent, subFactoriesBuilder, metadata);
+        SumAggregatorFactory.method = method;
     }
 
     static void registerAggregators(ValuesSourceRegistry.Builder builder) {
         builder.register(
             SumAggregationBuilder.REGISTRY_KEY,
             List.of(CoreValuesSourceType.NUMERIC, CoreValuesSourceType.DATE, CoreValuesSourceType.BOOLEAN),
-            SumAggregator::new,
+            SumAggregatorFactory::parseSumAggregator,
             true
         );
     }
 
+    private static Aggregator parseSumAggregator(String s, ValuesSourceConfig valuesSourceConfig, SearchContext searchContext, Aggregator aggregator, Map<String, Object> stringObjectMap) throws IOException {
+        if (!valuesSourceConfig.hasValues()) {
+            return new SumNullAggregator(s, valuesSourceConfig, searchContext, aggregator, stringObjectMap);
+        }
+
+        // use precise sum aggregator when optional keyword precise is used
+        if (Objects.equals(method, SumAggregationBuilder.methodType.PRECISE)) {
+            return new SumPreciseAggregator(s, valuesSourceConfig, searchContext, aggregator, stringObjectMap);
+        }
+
+        // use kahan summation when keyword kahan keyword is used and by default
+        return new SumAggregator(s, valuesSourceConfig, searchContext, aggregator, stringObjectMap);
+    }
+
     @Override
     protected Aggregator createUnmapped(SearchContext searchContext, Aggregator parent, Map<String, Object> metadata) throws IOException {
-        return new SumAggregator(name, config, searchContext, parent, metadata);
+        return new SumNullAggregator(name, config, searchContext, parent, metadata);
     }
 
     @Override
